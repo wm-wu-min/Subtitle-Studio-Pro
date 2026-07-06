@@ -1,0 +1,16 @@
+{
+    "llm_path": "",
+    "subtitle_format": "ASS",
+    "presets": [
+        "默认风格",
+        "Netflix 质感",
+        "Bilibili 双语",
+        "高亮大字"
+    ],
+    "trans_styles": [
+        "基础机翻 (快)",
+        "自然口语 (推荐)",
+        "诗意歌词 (感性)",
+        "理工科专业 (严谨)"
+    ]
+}
