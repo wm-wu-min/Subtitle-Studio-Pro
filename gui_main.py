@@ -11,17 +11,24 @@ import sys
 import datetime
 
 # ==========================================
-# 🌟 工程化路径解析 (完美适配 PyInstaller .exe 打包)
+# 🌟 原生拖拽支持库检测
+# ==========================================
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+    print("[警告] 未安装 tkinterdnd2，文件拖拽功能已禁用。请运行 pip install tkinterdnd2")
+
+# ==========================================
+# 🌟 工程化路径解析与日志拦截
 # ==========================================
 if getattr(sys, 'frozen', False):
-    # 如果是被打包成了 exe，以 exe 所在目录为基准
     APPLICATION_PATH = os.path.dirname(sys.executable)
 else:
-    # 如果是开发环境 (IDE)，以 py 脚本所在目录为基准
     APPLICATION_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# ========== 🌟 新增：全局日志强制捕获 ==========
-# 打包为 --noconsole 后，拦截所有输出写入本地日志，方便查错
 LOG_FILE = os.path.join(APPLICATION_PATH, "error_log.txt")
 
 
@@ -42,43 +49,35 @@ class StreamToLogger:
         pass
 
 
-# 拦截所有标准输出和错误输出（仅在打包后的环境执行，不影响你在 PyCharm 里的调试）
 if getattr(sys, 'frozen', False):
     sys.stdout = StreamToLogger(LOG_FILE)
     sys.stderr = sys.stdout
 
-# 将应用程序目录加入临时系统 PATH，让代码能直接识别到同目录下的 ffmpeg.exe
 os.environ["PATH"] += os.pathsep + APPLICATION_PATH
 
-# 用户可视化文件夹
 INPUT_DIR = os.path.join(APPLICATION_PATH, "input")
 OUTPUT_DIR = os.path.join(APPLICATION_PATH, "output")
-MODELS_DIR = os.path.join(APPLICATION_PATH, "models")  # 存放 GGUF大模型、Whisper和基础机翻模型
+MODELS_DIR = os.path.join(APPLICATION_PATH, "models")
 SETTINGS_FILE = os.path.join(APPLICATION_PATH, "config.json")
-
-# 工作隐藏缓存区
 WORKSPACE_DIR = os.path.join(APPLICATION_PATH, "workspace")
 THUMB_DIR = os.path.join(WORKSPACE_DIR, "thumbnails")
 
 for d in [INPUT_DIR, OUTPUT_DIR, MODELS_DIR, THUMB_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# ===== 核心修改：模型路径本地化 =====
-# 将 HuggingFace 和 Whisper 模型的下载路径强行锁定在程序同级的 models 文件夹中
-# 这样打包分享给别人时，别人就不需要重新下载模型了，完全的绿色便携版！
 os.environ['HF_HOME'] = os.path.join(MODELS_DIR, "huggingface")
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 os.makedirs(os.environ['HF_HOME'], exist_ok=True)
 
-# 强制深色模式
 ctk.set_appearance_mode("Dark")
 
 # ================= 默认配置项 =================
 DEFAULT_CONFIG = {
     "llm_path": "",
-    "subtitle_format": "ASS",
-    "presets": ["默认风格", "Netflix 质感", "Bilibili 双语", "高亮大字"],
-    "trans_styles": ["基础机翻 (快)", "自然口语 (推荐)", "诗意歌词 (感性)", "理工科专业 (严谨)"]
+    "whisper_model": "small (均衡)",
+    "whisper_prompt": "",
+    "custom_prompt": "你是一个严谨且精通多国文化的字幕组翻译专家。请将以下文本翻译为目标语言，必须要求信达雅、符合语境。请只输出最终的翻译结果，绝对不要输出拼音、解释或任何多余的标点。",
+    "enable_context": False
 }
 
 
@@ -106,12 +105,21 @@ ACCENT_COLOR, ACCENT_HOVER = "#2196F3", "#1976D2"
 STOP_COLOR, STOP_HOVER = "#FF4D4F", "#CF1322"
 TEXT_MAIN, TEXT_MUTED = "#E0E0E0", "#808080"
 
+if HAS_DND:
+    class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+else:
+    class CTkDnD(ctk.CTk):
+        pass
+
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, master, config, update_callback):
         super().__init__(master)
         self.title("⚙️ 高级设置中心")
-        self.geometry("580x650")
+        self.geometry("580x640")
         self.configure(fg_color=BG_COLOR)
         self.config = config
         self.update_callback = update_callback
@@ -123,7 +131,7 @@ class SettingsWindow(ctk.CTkToplevel):
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         ctk.CTkLabel(main_frame, text="系统与 AI 模型全局配置", font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=TEXT_MAIN).pack(pady=(20, 20))
+                     text_color=TEXT_MAIN).pack(pady=(15, 15))
 
         ctk.CTkLabel(main_frame, text="本地大语言模型 (GGUF) 路径:", font=ctk.CTkFont(size=13),
                      text_color=TEXT_MUTED).pack(anchor="w", padx=20, pady=(0, 5))
@@ -135,42 +143,32 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkButton(llm_frame, text="浏览文件", width=70, height=32, fg_color="#333333", hover_color="#444444",
                       command=self.browse_llm).pack(side="right")
 
-        ctk.CTkLabel(main_frame, text="字幕导出底层格式:", font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(
-            anchor="w", padx=20, pady=(20, 5))
-        self.format_menu = ctk.CTkOptionMenu(main_frame, values=["ASS (高级排版)", "SRT (通用字幕)", "VTT (Web通用)",
-                                                                 "LRC (音乐歌词)"],
-                                             fg_color="#2A2A2A", button_color="#333333",
-                                             button_hover_color=ACCENT_HOVER)
-        fmt_val = self.config.get("subtitle_format", "ASS").upper()
-        if "SRT" in fmt_val:
-            self.format_menu.set("SRT (通用字幕)")
-        elif "VTT" in fmt_val:
-            self.format_menu.set("VTT (Web通用)")
-        elif "LRC" in fmt_val:
-            self.format_menu.set("LRC (音乐歌词)")
-        else:
-            self.format_menu.set("ASS (高级排版)")
-        self.format_menu.pack(anchor="w", padx=20)
-
-        ctk.CTkLabel(main_frame, text="大模型翻译风格 (用中文逗号，分隔):", font=ctk.CTkFont(size=13),
+        # 🌟 Whisper 专有名词注入框
+        ctk.CTkLabel(main_frame, text="Whisper 专有名词字典 (英文，用逗号分隔，纠正听写发音):", font=ctk.CTkFont(size=13),
                      text_color=TEXT_MUTED).pack(anchor="w", padx=20, pady=(20, 5))
-        self.entry_trans = ctk.CTkEntry(main_frame, height=32, fg_color="#2A2A2A", border_width=1,
-                                        border_color="#3E3E42")
-        self.entry_trans.insert(0, "，".join(self.config.get("trans_styles", [])))
-        self.entry_trans.pack(fill="x", padx=20)
+        self.entry_whisper_prompt = ctk.CTkEntry(main_frame, height=32, fg_color="#2A2A2A", border_width=1,
+                                                 border_color="#3E3E42")
+        self.entry_whisper_prompt.insert(0, self.config.get("whisper_prompt", ""))
+        self.entry_whisper_prompt.pack(fill="x", padx=20)
 
-        ctk.CTkLabel(main_frame, text="字幕排版预设 (用中文逗号，分隔):", font=ctk.CTkFont(size=13),
+        # 🌟 翻译大模型自定义 Prompt
+        ctk.CTkLabel(main_frame, text="自定义大模型提示词 (仅当任务中选择“自定义”时生效):", font=ctk.CTkFont(size=13),
                      text_color=TEXT_MUTED).pack(anchor="w", padx=20, pady=(20, 5))
-        self.entry_presets = ctk.CTkEntry(main_frame, height=32, fg_color="#2A2A2A", border_width=1,
-                                          border_color="#3E3E42")
-        self.entry_presets.insert(0, "，".join(self.config.get("presets", [])))
-        self.entry_presets.pack(fill="x", padx=20)
+        self.textbox_prompt = ctk.CTkTextbox(main_frame, height=120, fg_color="#2A2A2A", border_width=1,
+                                             border_color="#3E3E42", font=ctk.CTkFont(size=13))
+        self.textbox_prompt.insert("1.0", self.config.get("custom_prompt", ""))
+        self.textbox_prompt.pack(fill="x", padx=20)
+
+        # 🌟 智能上下文开关
+        self.enable_context_var = ctk.BooleanVar(value=self.config.get("enable_context", False))
+        ctk.CTkSwitch(main_frame, text="开启 AI 全局语境纠错 (结合全文高频词与前后文，提升专业名词准确率)",
+                      variable=self.enable_context_var, font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=ACCENT_COLOR, progress_color=ACCENT_COLOR).pack(anchor="w", padx=20, pady=(20, 0))
 
         ctk.CTkButton(main_frame, text="✔ 保存并立即生效", font=ctk.CTkFont(size=14, weight="bold"), height=40,
-                      fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER, command=self.save).pack(pady=(40, 20))
+                      fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER, command=self.save).pack(pady=(20, 20))
 
     def browse_llm(self):
-        # 默认从 models 目录打开
         path = filedialog.askopenfilename(title="选择 GGUF 模型文件", initialdir=MODELS_DIR,
                                           filetypes=[("GGUF Model", "*.gguf"), ("All Files", "*.*")])
         if path:
@@ -179,23 +177,9 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def save(self):
         self.config["llm_path"] = self.entry_llm.get().strip()
-        fmt = self.format_menu.get()
-        if "SRT" in fmt:
-            self.config["subtitle_format"] = "SRT"
-        elif "VTT" in fmt:
-            self.config["subtitle_format"] = "VTT"
-        elif "LRC" in fmt:
-            self.config["subtitle_format"] = "LRC"
-        else:
-            self.config["subtitle_format"] = "ASS"
-
-        trans_str = self.entry_trans.get().replace(",", "，")
-        preset_str = self.entry_presets.get().replace(",", "，")
-        self.config["trans_styles"] = [p.strip() for p in trans_str.split("，") if p.strip()]
-        self.config["presets"] = [p.strip() for p in preset_str.split("，") if p.strip()]
-
-        if not self.config["trans_styles"]: self.config["trans_styles"] = ["自然口语 (推荐)"]
-        if not self.config["presets"]: self.config["presets"] = ["默认风格"]
+        self.config["whisper_prompt"] = self.entry_whisper_prompt.get().strip()
+        self.config["custom_prompt"] = self.textbox_prompt.get("1.0", "end-1c").strip()
+        self.config["enable_context"] = self.enable_context_var.get()
 
         save_config(self.config)
         self.update_callback(self.config)
@@ -211,8 +195,8 @@ class VideoTaskCard(ctk.CTkFrame):
         self.config = config
         self.is_completed = False
 
-        self.model_var = ctk.StringVar(value="small (均衡)")
-        self.trans_style_var = ctk.StringVar(value=self.config["trans_styles"][0])
+        self.format_var = ctk.StringVar(value="ASS (高级排版)")
+        self.trans_style_var = ctk.StringVar(value="自然口语 (推荐)")
         self.main_lang_var = ctk.StringVar(value="中文")
         self.sub_lang_var = ctk.StringVar(value="英文")
 
@@ -222,7 +206,7 @@ class VideoTaskCard(ctk.CTkFrame):
             "阿拉伯文", "印地文", "泰文", "越南文", "印尼文"
         ]
 
-        self.style_preset_var = ctk.StringVar(value=self.config["presets"][0])
+        self.style_preset_var = ctk.StringVar(value="默认风格")
         self.main_size_var = ctk.StringVar(value="22")
         self.sub_size_var = ctk.StringVar(value="14")
         self.primary_color = "#FFFFFF"
@@ -254,14 +238,16 @@ class VideoTaskCard(ctk.CTkFrame):
         main_lang_options = ["源语言"] + self.supported_langs
         sub_lang_options = ["源语言"] + self.supported_langs + ["无(单语)"]
 
-        self._create_setting_menu(self.settings_frame, 0, 0, "听写模型", self.model_var,
-                                  ["base", "small", "medium", "large-v3"], 75)
+        self._create_setting_menu(self.settings_frame, 0, 0, "导出格式", self.format_var,
+                                  ["ASS (高级排版)", "SRT (通用文本)", "VTT (Web通用)", "LRC (音乐歌词)"], 115)
         self.menu_trans = self._create_setting_menu(self.settings_frame, 0, 1, "大模型风格", self.trans_style_var,
-                                                    self.config["trans_styles"], 125)
+                                                    ["基础机翻 (快)", "自然口语 (推荐)", "诗意歌词 (感性)",
+                                                     "理工科专业 (严谨)", "自定义 (高级)"], 125)
         self._create_setting_menu(self.settings_frame, 0, 2, "主字幕", self.main_lang_var, main_lang_options, 75)
         self._create_setting_menu(self.settings_frame, 0, 3, "副字幕", self.sub_lang_var, sub_lang_options, 75)
-        self.menu_preset = self._create_setting_menu(self.settings_frame, 0, 4, "预设", self.style_preset_var,
-                                                     self.config["presets"], 85)
+        self.menu_preset = self._create_setting_menu(self.settings_frame, 0, 4, "排版预设", self.style_preset_var,
+                                                     ["默认风格", "Netflix 质感", "Bilibili 双语", "高亮大字"], 95)
+
         self._create_size_config(self.settings_frame, 0, 5)
         self._create_color_config(self.settings_frame, 0, 6)
 
@@ -282,12 +268,7 @@ class VideoTaskCard(ctk.CTkFrame):
         self.btn_delete.grid(row=0, column=2, padx=15, pady=15, sticky="ne")
 
     def update_menus(self):
-        self.menu_trans.configure(values=self.config["trans_styles"])
-        self.menu_preset.configure(values=self.config["presets"])
-        if self.trans_style_var.get() not in self.config["trans_styles"]: self.trans_style_var.set(
-            self.config["trans_styles"][0])
-        if self.style_preset_var.get() not in self.config["presets"]: self.style_preset_var.set(
-            self.config["presets"][0])
+        pass
 
     def show_progress_mode(self):
         self.settings_frame.grid_remove()
@@ -384,10 +365,15 @@ class VideoTaskCard(ctk.CTkFrame):
                 thumb_path = os.path.join(THUMB_DIR, f"thumb_{abs(hash(self.video_path))}.jpg")
                 is_audio = self.video_path.lower().endswith(('.mp3', '.wav', '.flac', '.m4a'))
 
-                if not os.path.exists(thumb_path) and not is_audio:
-                    cmd_cover = ['ffmpeg', '-y', '-ss', '00:00:01', '-i', self.video_path, '-frames:v', '1', '-q:v',
-                                 '2', thumb_path]
-                    subprocess.run(cmd_cover, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if not os.path.exists(thumb_path):
+                    if is_audio:
+                        cmd_cover = ['ffmpeg', '-y', '-i', self.video_path, '-an', '-frames:v', '1', thumb_path]
+                        subprocess.run(cmd_cover, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        cmd_cover = ['ffmpeg', '-y', '-ss', '00:00:01', '-i', self.video_path, '-frames:v', '1', '-q:v',
+                                     '2', thumb_path]
+                        subprocess.run(cmd_cover, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
                 self.after(0, self.update_ui_info, size_mb, f"{mins:02d}:{secs:02d}", thumb_path, is_audio)
             except Exception:
                 self.after(0, lambda: self.lbl_info.configure(text=f"未知时长  |  {size_mb:.1f} MB"))
@@ -397,14 +383,17 @@ class VideoTaskCard(ctk.CTkFrame):
     def update_ui_info(self, size_mb, duration_str, thumb_path, is_audio=False):
         self.lbl_info.configure(text=f"{duration_str}  •  {size_mb:.1f} MB")
         if os.path.exists(thumb_path):
-            img = Image.open(thumb_path)
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(192, 108))
-            self.lbl_thumb.configure(image=ctk_img, text="")
+            try:
+                img = Image.open(thumb_path)
+                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(192, 108))
+                self.lbl_thumb.configure(image=ctk_img, text="")
+            except Exception:
+                self.lbl_thumb.configure(text="🎵 纯音频" if is_audio else "无画面")
         else:
             self.lbl_thumb.configure(text="🎵 纯音频" if is_audio else "无画面")
 
 
-class ModernVideoTranslator(ctk.CTk):
+class ModernVideoTranslator(CTkDnD):
     def __init__(self):
         super().__init__()
         self.config = load_config()
@@ -415,7 +404,7 @@ class ModernVideoTranslator(ctk.CTk):
         self.minsize(1200, 600)
         self.configure(fg_color=BG_COLOR)
 
-        self.output_dir = ctk.StringVar(value=OUTPUT_DIR)  # 默认使用打包路径下的 output 文件夹
+        self.output_dir = ctk.StringVar(value=OUTPUT_DIR)
         self.task_cards = []
         self.is_processing = False
 
@@ -425,8 +414,11 @@ class ModernVideoTranslator(ctk.CTk):
         self.build_header()
         self.build_task_area()
 
-        # 🌟 注册窗口关闭事件，执行清理工作
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        if HAS_DND:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind('<<Drop>>', self.handle_drop)
 
     def _apply_global_env(self):
         os.environ["LOCAL_GEMMA_PATH"] = self.config.get("llm_path", "")
@@ -460,12 +452,24 @@ class ModernVideoTranslator(ctk.CTk):
         path_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(15, 0))
 
         ctk.CTkLabel(path_frame, text="输出目录:", font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(side="left")
-        lbl_path = ctk.CTkLabel(path_frame, textvariable=self.output_dir, font=ctk.CTkFont(size=13),
-                                text_color=TEXT_MAIN)
-        lbl_path.pack(side="left", padx=(10, 10))
+
+        self.lbl_path = ctk.CTkLabel(path_frame, textvariable=self.output_dir,
+                                     font=ctk.CTkFont(size=13, underline=True), text_color=ACCENT_COLOR, cursor="hand2")
+        self.lbl_path.pack(side="left", padx=(10, 10))
+        self.lbl_path.bind("<Button-1>", lambda e: self.open_output_folder())
+
         ctk.CTkButton(path_frame, text="更改", width=50, height=24, fg_color="transparent", hover_color="#2A2A2A",
                       border_width=1, border_color="#333333", text_color=TEXT_MUTED,
                       command=self.choose_output_dir).pack(side="left")
+
+        ctk.CTkLabel(path_frame, text="全局听写模型:", font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(
+            side="left", padx=(30, 5))
+        self.global_whisper_var = ctk.StringVar(value=self.config.get("whisper_model", "small (均衡)"))
+        ctk.CTkOptionMenu(path_frame, variable=self.global_whisper_var,
+                          values=["base (极速)", "small (均衡)", "medium (精准)", "large-v3 (极致)"],
+                          width=110, height=24, fg_color="#2A2A2A", button_color="#333333",
+                          button_hover_color=ACCENT_HOVER,
+                          font=ctk.CTkFont(size=12), command=self.save_whisper_choice).pack(side="left")
 
         ctk.CTkButton(path_frame, text="⚙️ 系统配置", width=85, height=24, fg_color="#2A2A2A", hover_color="#333333",
                       text_color=TEXT_MAIN, command=self.open_settings).pack(side="right", padx=(10, 0))
@@ -484,9 +488,25 @@ class ModernVideoTranslator(ctk.CTk):
         self.scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.scrollable_frame.grid_columnconfigure(0, weight=1)
 
-        self.empty_label = ctk.CTkLabel(self.list_container, text="列表为空\n点击右上角「+ 导入影音」开始任务",
+        self.empty_label = ctk.CTkLabel(self.list_container,
+                                        text="列表为空\n\n可点击右上角「+ 导入影音」\n或 直接将媒体文件拖入此窗口",
                                         font=ctk.CTkFont(size=16), text_color="#333333", justify="center")
         self.empty_label.place(relx=0.5, rely=0.4, anchor="center")
+
+    def save_whisper_choice(self, choice):
+        self.config["whisper_model"] = choice
+        save_config(self.config)
+
+    def open_output_folder(self):
+        folder = self.output_dir.get()
+        if os.path.exists(folder): os.startfile(folder)
+
+    def handle_drop(self, event):
+        if self.is_processing: return
+        files = self.tk.splitlist(event.data)
+        valid_exts = ('.mp4', '.mkv', '.mov', '.avi', '.mp3', '.wav', '.flac', '.m4a')
+        for f in files:
+            if f.lower().endswith(valid_exts): self.add_task_card(f)
 
     def open_settings(self):
         SettingsWindow(self, self.config, self.on_config_updated)
@@ -504,7 +524,6 @@ class ModernVideoTranslator(ctk.CTk):
 
     def add_videos(self):
         if self.is_processing: return
-        # 默认从 input 文件夹中挑选文件
         files = filedialog.askopenfilenames(title="导入媒体文件", initialdir=INPUT_DIR, filetypes=[
             ("Media Files", "*.mp4 *.mkv *.mov *.avi *.mp3 *.wav *.flac *.m4a")])
         for f in files: self.add_task_card(f)
@@ -565,19 +584,20 @@ class ModernVideoTranslator(ctk.CTk):
             base_name = os.path.splitext(card.filename)[0]
             audio_path = os.path.join(WORKSPACE_DIR, f"{base_name}_temp.wav")
 
-            ext = self.config.get("subtitle_format", "ASS").lower()
-            if "srt" in ext:
+            ext_full = card.format_var.get().lower()
+            if "srt" in ext_full:
                 ext = "srt"
-            elif "vtt" in ext:
+            elif "vtt" in ext_full:
                 ext = "vtt"
-            elif "lrc" in ext:
+            elif "lrc" in ext_full:
                 ext = "lrc"
             else:
                 ext = "ass"
+
             ass_path = os.path.join(output_dir, f"{base_name}.{ext}")
 
             try:
-                model_size = card.model_var.get().split()[0]
+                model_size = self.global_whisper_var.get().split()[0]
                 m_lang = card.main_lang_var.get()
                 s_lang = card.sub_lang_var.get()
                 trans_style = card.trans_style_var.get()
@@ -588,24 +608,33 @@ class ModernVideoTranslator(ctk.CTk):
                 if not self.is_processing: break
 
                 card.update_progress(0.4, "AI 语音听写转录中 (提取真实源语言)...")
-
-                # 🌟 核心修改：将 Whisper 模型路径指向本地 models/whisper 文件夹
                 whisper_models_dir = os.path.join(MODELS_DIR, "whisper")
                 os.makedirs(whisper_models_dir, exist_ok=True)
                 recognizer = SpeechRecognizer(model_size=model_size, models_dir=whisper_models_dir)
 
                 whisper_task = "translate" if "基础机翻" in trans_style else "transcribe"
-                segments = recognizer.transcribe(audio_path, task=whisper_task)
+
+                # 🌟 核心：提取用户输入的 Whisper 专有名词引导词，并传给底层
+                w_prompt = self.config.get("whisper_prompt", "")
+                segments = recognizer.transcribe(audio_path, task=whisper_task, initial_prompt=w_prompt)
+
                 if not self.is_processing: break
 
                 langs_to_translate = set()
                 if m_lang not in ["源语言"]: langs_to_translate.add(m_lang)
                 if s_lang not in ["源语言", "无(单语)"]: langs_to_translate.add(s_lang)
 
+                custom_prompt_text = self.config.get("custom_prompt", "")
+                # 🌟 全局高频词语境感知开关
+                enable_ctx = self.config.get("enable_context", False)
+
                 lang_results = {}
                 for lang in langs_to_translate:
                     card.update_progress(0.6 + 0.1 * len(lang_results), f"Gemma 模型: 翻译至 [{lang}] 中...")
-                    lang_results[lang] = global_translator.translate(segments, target_lang=lang, style=trans_style)
+                    lang_results[lang] = global_translator.translate(
+                        segments, target_lang=lang, style=trans_style,
+                        custom_prompt=custom_prompt_text, enable_context=enable_ctx
+                    )
                     if not self.is_processing: break
 
                 if not self.is_processing: break
@@ -664,17 +693,15 @@ class ModernVideoTranslator(ctk.CTk):
         for card in self.task_cards:
             if not card.is_completed: card.show_settings_mode()
 
-    # 🌟 监听关闭事件：退出时清空所有的封面缓存！
     def on_closing(self):
         if os.path.exists(THUMB_DIR):
             try:
                 shutil.rmtree(THUMB_DIR)
                 os.makedirs(THUMB_DIR, exist_ok=True)
-                print("[INFO] 退出程序，已清空封面缓存。")
-            except Exception as e:
-                print(f"[WARNING] 缓存清理失败: {e}")
+            except Exception:
+                pass
         self.destroy()
-        os._exit(0)  # 强制关闭所有残留的后台线程
+        os._exit(0)
 
 
 if __name__ == "__main__":

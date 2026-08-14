@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- 背景渐变：从深灰到极黑，匹配软件的 #0D0D0D 和 #1A1A1A -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2A2A2A" />
+      <stop offset="100%" stop-color="#0A0A0A" />
+    </linearGradient>
+    
+    <!-- 点缀渐变：匹配软件的主题蓝 #2196F3 -->
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#42A5F5" />
+      <stop offset="100%" stop-color="#1565C0" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 1. 圆角矩形底板 (Squircle) -->
+  <rect width="512" height="512" rx="115" fill="url(#bgGradient)" stroke="#3E3E42" stroke-width="4"/>
+  
+  <!-- 2. 音频波形 (代表 Whisper 语音识别与纯音频支持) -->
+  <!-- 左一 -->
+  <rect x="164" y="150" width="24" height="60" rx="12" fill="#808080" />
+  <!-- 左二 -->
+  <rect x="204" y="130" width="24" height="100" rx="12" fill="url(#accentGradient)" />
+  <!-- 居中 (最高) -->
+  <rect x="244" y="110" width="24" height="140" rx="12" fill="#E0E0E0" />
+  <!-- 右一 -->
+  <rect x="284" y="130" width="24" height="100" rx="12" fill="url(#accentGradient)" />
+  <!-- 右二 -->
+  <rect x="324" y="150" width="24" height="60" rx="12" fill="#808080" />
+
+  <!-- 3. 字幕线条 (代表大模型双语翻译与 ASS/LRC 排版) -->
+  <!-- 主字幕 (较长，高亮蓝色) -->
+  <rect x="136" y="300" width="240" height="32" rx="16" fill="url(#accentGradient)" />
+  <!-- 副字幕 (较短，灰色) -->
+  <rect x="176" y="350" width="160" height="32" rx="16" fill="#808080" />
+</svg>

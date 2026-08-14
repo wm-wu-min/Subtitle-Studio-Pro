@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# 模型文件（体积巨大，不入库，按需从 HuggingFace/网盘下载）
+models/*
+!models/README.MD
+
+# 运行产物
+input/
+workspace/
+*.mp4
+*.mp3
+*.flac
+*.wav
+
+# 系统
+Thumbs.db
+.DS_Store
