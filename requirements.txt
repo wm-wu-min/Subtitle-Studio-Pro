@@ -1,3 +1,16 @@
+# GUI
+customtkinter
+Pillow
+tkinterdnd2
+
+# 语音识别
 openai-whisper
+
+# 字幕处理
 pysubs2
+
+# 翻译（基础机翻）
 transformers
+
+# 翻译（本地大模型，可选，GPU 加速版见 README 安装指南）
+# llama-cpp-python
